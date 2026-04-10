@@ -20,7 +20,8 @@ init(autoreset=True)
 # | Constants
 #----------------------------------------------
 URL = "https://discord.com/api/v10/users/@me"
-DELAY = 2
+CHECK_URL = "https://discord.com/api/v10/users/@me/pomelo-attempt"
+DELAY = 10
 
 # | Variables
 #----------------------------------------------
@@ -37,29 +38,26 @@ class UsernameChecker:
         self.webhook = webhook
         self.debugging = debugging
         self.timeStarted = datetime.now()
+        self.delay = DELAY
 
     def check_username(self, username):
         data = {"username": username}
 
         while True:
             try:
-                r = requests.patch(URL, headers=headers, data=json.dumps(data))
+                r = requests.post(CHECK_URL, headers=headers, data=json.dumps(data))
                 rJson = r.json()
 
                 # If rate limited, retry
                 if r.status_code == 429:
                     retryTime = max(rJson.get("retry_after", 5), 5)
-                    print(Fore.RED + f"Rate limited! Resuming in {retryTime}s")
+                    self.delay = min(self.delay + 5, 30)
+                    print(Fore.RED + f"Rate limited! Resuming in {retryTime}s (delay now {self.delay}s)")
                     sleep(retryTime)
                     continue
 
-                errors = rJson.get("errors")
-                if errors:
-                    if errors.get("username"):
-                        # Username taken/invalid
-                        if self.debugging:
-                            print(Fore.RED + username)
-                    else:
+                if r.status_code == 200:
+                    if rJson.get("taken") is False:
                         # Username available
                         print(Fore.GREEN + username)
                         self.validUsernames.append(username)
@@ -67,8 +65,12 @@ class UsernameChecker:
                             f.write(f"{username}\n")
                         if self.webhook:
                             self.send_to_discord(username)
+                    else:
+                        # Username taken
+                        if self.debugging:
+                            print(Fore.RED + username)
                 else:
-                    print(Fore.RED + f'Error validating >> {rJson.get("message")}')
+                    print(Fore.RED + f'Error validating >> {rJson.get("message", r.status_code)}')
                 break
 
             except Exception as e:
@@ -99,7 +101,7 @@ class UsernameChecker:
                     if any(c in letters for c in username) and username not in checked:
                         break
                 checked.add(username)
-                sleep(DELAY)
+                sleep(self.delay)
                 self.check_username(username)
         except KeyboardInterrupt:
             print(Fore.LIGHTYELLOW_EX + f"\n\nStopped. Checked {len(checked)} usernames.")
