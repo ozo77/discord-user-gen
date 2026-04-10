@@ -10,7 +10,7 @@ __version__ = 0.1
 import requests
 import string
 import json
-from time import sleep
+from time import sleep, time
 from random import choice
 from colorama import Fore, init
 from datetime import datetime
@@ -21,12 +21,13 @@ init(autoreset=True)
 #----------------------------------------------
 URL = "https://discord.com/api/v10/users/@me"
 CHECK_URL = "https://discord.com/api/v10/users/@me/pomelo-attempt"
-DELAY = 10
+DELAY = 150
 
 # | Variables
 #----------------------------------------------
-token = "PUT YOUR TOKEN INTO THE FILE TOKEN.TXT, NOT HERE"
-headers = {}
+tokens = []
+token_headers = []
+token_cooldowns = []
 
 # | Main Class
 #----------------------------------------------
@@ -38,28 +39,44 @@ class UsernameChecker:
         self.webhook = webhook
         self.debugging = debugging
         self.timeStarted = datetime.now()
-        self.delay = DELAY
+        self.current_token = 0
+
+    def get_next_headers(self):
+        """Get the next available token that isn't on cooldown."""
+        now = time()
+        for _ in range(len(tokens)):
+            idx = self.current_token % len(tokens)
+            self.current_token += 1
+            if token_cooldowns[idx] <= now:
+                return idx, token_headers[idx]
+        # All tokens on cooldown, wait for the soonest one
+        soonest = min(range(len(tokens)), key=lambda i: token_cooldowns[i])
+        wait = token_cooldowns[soonest] - now
+        if wait > 0:
+            print(Fore.LIGHTYELLOW_EX + f"All tokens cooling down, waiting {wait:.0f}s...")
+            sleep(wait)
+        return soonest, token_headers[soonest]
 
     def check_username(self, username):
         data = {"username": username}
 
         while True:
             try:
-                r = requests.post(CHECK_URL, headers=headers, data=json.dumps(data))
+                idx, hdrs = self.get_next_headers()
+                r = requests.post(CHECK_URL, headers=hdrs, data=json.dumps(data))
                 rJson = r.json()
 
-                # If rate limited, retry
+                # If rate limited, cooldown this token and retry with next
                 if r.status_code == 429:
-                    retryTime = max(rJson.get("retry_after", 5), 5)
-                    self.delay = min(self.delay + 5, 30)
-                    print(Fore.RED + f"Rate limited! Resuming in {retryTime}s (delay now {self.delay}s)")
-                    sleep(retryTime)
+                    retryTime = max(rJson.get("retry_after", 10), 10)
+                    token_cooldowns[idx] = time() + retryTime
+                    print(Fore.RED + f"Token {idx+1} rate limited ({retryTime:.0f}s), rotating...")
                     continue
 
                 if r.status_code == 200:
                     if rJson.get("taken") is False:
                         # Username available
-                        print(Fore.GREEN + username)
+                        print(Fore.GREEN + f"[Token {idx+1}] {username}")
                         self.validUsernames.append(username)
                         with open("validUsernames.txt", "a") as f:
                             f.write(f"{username}\n")
@@ -68,7 +85,7 @@ class UsernameChecker:
                     else:
                         # Username taken
                         if self.debugging:
-                            print(Fore.RED + username)
+                            print(Fore.RED + f"[Token {idx+1}] {username}")
                 else:
                     print(Fore.RED + f'Error validating >> {rJson.get("message", r.status_code)}')
                 break
@@ -101,7 +118,7 @@ class UsernameChecker:
                     if any(c in letters for c in username) and username not in checked:
                         break
                 checked.add(username)
-                sleep(self.delay)
+                sleep(DELAY)
                 self.check_username(username)
         except KeyboardInterrupt:
             print(Fore.LIGHTYELLOW_EX + f"\n\nStopped. Checked {len(checked)} usernames.")
@@ -128,22 +145,39 @@ def check_if_outdated():
         print(Fore.RED + "[!] THIS VERSION IS OUTDATED, PLEASE UPDATE")
 
 def check_token():
-    global token, headers
+    global tokens, token_headers, token_cooldowns
     
     with open("./token.txt", "r") as f:
-        token = f.read().strip()
+        tokens = [t.strip() for t in f.readlines() if t.strip()]
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": token,
-    }
-
-    discordUser = requests.get(URL, headers=headers)
-    if discordUser.status_code == 401:
-        print(Fore.RED + "Invalid token inside the file token.txt")
+    if not tokens:
+        print(Fore.RED + "No tokens found in token.txt")
         exit()
 
-    return discordUser.json().get("username")
+    token_headers = []
+    token_cooldowns = [0] * len(tokens)
+    valid_name = None
+
+    for i, t in enumerate(tokens):
+        hdrs = {"Content-Type": "application/json", "Authorization": t}
+        r = requests.get(URL, headers=hdrs)
+        if r.status_code == 401:
+            print(Fore.RED + f"Token {i+1} is invalid, skipping")
+            continue
+        token_headers.append(hdrs)
+        name = r.json().get("username", "?")
+        print(Fore.GREEN + f"Token {i+1}: {name}")
+        if not valid_name:
+            valid_name = name
+
+    if not token_headers:
+        print(Fore.RED + "No valid tokens found in token.txt")
+        exit()
+
+    tokens = tokens[:len(token_headers)]
+    token_cooldowns = [0] * len(token_headers)
+    print(Fore.LIGHTYELLOW_EX + f"Loaded {len(token_headers)} token(s)")
+    return valid_name
 
 def show_options():
     discordName = check_token()
