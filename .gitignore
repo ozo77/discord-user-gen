@@ -2,5 +2,6 @@ token.txt
 discordWebhook.txt
 validUsernames.txt
 proxies.txt
+checked.txt
 __pycache__/
 *.pyc
