@@ -10,9 +10,8 @@ __version__ = 0.1
 import requests
 import string
 import json
-import ast
 from time import sleep
-from random import shuffle, choice
+from random import choice
 from colorama import Fore, init
 from datetime import datetime
 
@@ -20,7 +19,6 @@ init(autoreset=True)
 
 # | Constants
 #----------------------------------------------
-NAMELIST_URL = "https://raw.githubusercontent.com/ozo77/discord-user-gen/main/namelist.txt"
 URL = "https://discord.com/api/v10/users/@me"
 DELAY = 2
 
@@ -43,26 +41,26 @@ class UsernameChecker:
     def check_username(self, username):
         data = {"username": username}
 
-        try:
-            r = requests.patch(URL, headers=headers, data=json.dumps(data))
-            rJson = r.json()
+        while True:
+            try:
+                r = requests.patch(URL, headers=headers, data=json.dumps(data))
+                rJson = r.json()
 
-            # If rate limited
-            if r.status_code == 429:
-                retryTime = max(rJson.get("retry_after"), 5)
-                print(Fore.RED + f"You have been rate limited! Will resume in {retryTime}s")
-                sleep(retryTime)
+                # If rate limited, retry
+                if r.status_code == 429:
+                    retryTime = max(rJson.get("retry_after", 5), 5)
+                    print(Fore.RED + f"Rate limited! Resuming in {retryTime}s")
+                    sleep(retryTime)
+                    continue
 
-            else:
                 errors = rJson.get("errors")
-
                 if errors:
                     if errors.get("username"):
-                        # Invalid username
+                        # Username taken/invalid
                         if self.debugging:
                             print(Fore.RED + username)
                     else:
-                        # Valid username
+                        # Username available
                         print(Fore.GREEN + username)
                         self.validUsernames.append(username)
                         with open("validUsernames.txt", "a") as f:
@@ -71,9 +69,11 @@ class UsernameChecker:
                             self.send_to_discord(username)
                 else:
                     print(Fore.RED + f'Error validating >> {rJson.get("message")}')
+                break
 
-        except Exception as e:
-            print(Fore.RED + f"Username check errored: {e}")
+            except Exception as e:
+                print(Fore.RED + f"Username check errored: {e}")
+                break
 
     def from_text_list(self, file="./checkUsernames.txt"):
         with open(file, "r") as f:
@@ -83,47 +83,27 @@ class UsernameChecker:
 
         self.is_completed()
 
-    def generate_names(self, users_wanted=1, max_length=20, name_url=NAMELIST_URL):
-        nameList = None
+    def generate_and_check(self, char_lengths=[3, 4]):
+        characters = string.ascii_lowercase + string.digits
+        letters = set(string.ascii_lowercase)
+        checked = set()
 
-        # Get namelist
+        print(Fore.LIGHTYELLOW_EX + f"\nGenerating {'/'.join(map(str, char_lengths))}-char usernames...")
+        print(Fore.LIGHTYELLOW_EX + "Press Ctrl+C to stop\n")
+
         try:
-            nameListReq = requests.get(name_url).text
-            nameList = ast.literal_eval(nameListReq)
-            shuffle(nameList)
-        except Exception as e:
-            print(Fore.RED + "Namelist was unable to load" + str(e))
-            return
-
-        # Check each name
-        for name in nameList:
-            if len(name) > max_length:
-                continue
-
-            self.check_username(name)
-            if len(self.validUsernames) >= users_wanted:
-                break
-            sleep(DELAY)
-
-        self.is_completed()
-
-    def generate_names_chars(self, users_wanted, char_length):
-        characters = string.ascii_lowercase + "._"
-
-        while len(self.validUsernames) < users_wanted:
-            random_string = ""
-            while len(random_string) < char_length:
-                random_character = choice(characters)
-
-                if random_string[-1:] == random_character and random_character in [".", "_"]:
-                    continue
-
-                random_string += random_character
-
-            sleep(DELAY)
-            self.check_username(random_string)
-
-        self.is_completed()
+            while True:
+                length = choice(char_lengths)
+                while True:
+                    username = ''.join(choice(characters) for _ in range(length))
+                    if any(c in letters for c in username) and username not in checked:
+                        break
+                checked.add(username)
+                sleep(DELAY)
+                self.check_username(username)
+        except KeyboardInterrupt:
+            print(Fore.LIGHTYELLOW_EX + f"\n\nStopped. Checked {len(checked)} usernames.")
+            self.is_completed()
 
     def send_to_discord(self, name):
         data = {
@@ -176,14 +156,14 @@ f"""
 ██████╔╝██║███████║╚██████╗╚██████╔╝██║  ██║██████╔╝██║███████╗███████╗
 ╚═════╝ ╚═╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚═╝╚══════╝╚══════╝
                                                                     
->> >> Viperize (https://github.com/Viperize)
+>> >> ozo77 (https://github.com/ozo77)
 >> >> v0.1
 >> >> {discordName}
 {Fore.WHITE}
-> 1 ) Check username list
-> 2 ) Generate usernames
-> 3 ) Generate 3 character names
-> 4 ) Generate 4 character names
+> 1 ) Generate & check 3-char usernames (infinite)
+> 2 ) Generate & check 4-char usernames (infinite)
+> 3 ) Generate & check 3 & 4-char usernames (infinite)
+> 4 ) Check from username list
 {Fore.LIGHTYELLOW_EX}
 =============================================================================
 
@@ -229,23 +209,13 @@ if __name__ == "__main__":
             checkerInstance = UsernameChecker(d_webhook, debugging)
 
             if operation == "1":
+                checkerInstance.generate_and_check([3])
+            elif operation == "2":
+                checkerInstance.generate_and_check([4])
+            elif operation == "3":
+                checkerInstance.generate_and_check([3, 4])
+            elif operation == "4":
                 checkerInstance.from_text_list()
-            else:
-                users = input("Number of usernames to generate: ")
-                if not users.isdigit():
-                    raise Exception("Invalid input for number of users")
-
-                if operation in ["3", "4"]:
-                    checkerInstance.generate_names_chars(int(users), int(operation))
-                    sleep(5)
-                    continue
-
-                max_length = input("Maximum length of username: ")
-                if not max_length.isdigit():
-                    raise Exception("Invalid input for maximum length")
-                if int(max_length) < 3:
-                    raise Exception("Invalid username length")
-                checkerInstance.generate_names(int(users), int(max_length))
 
             sleep(5)
 
