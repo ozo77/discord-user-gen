@@ -127,17 +127,7 @@ class UsernameChecker:
 
     def send_to_discord(self, name):
         data = {
-            "embeds": [
-                {
-                    "title": f"**{name}**",
-                    "url": "https://github.com/ozo77/",
-                    "color": 706405,
-                    "footer": {
-                        "text": "Discordize"
-                    },
-                    "timestamp": str(datetime.now())
-                }
-            ]
+            "content": f"`{name}` is available",
         }
         try:
             requests.post(self.webhook, json=data)
